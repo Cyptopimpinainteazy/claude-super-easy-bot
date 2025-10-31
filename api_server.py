@@ -4,30 +4,52 @@ ARBITRAGE BOT API SERVER
 FastAPI server to connect backend arbitrage engine with frontend dashboard
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict, Optional, Any
+# OpenTelemetry Tracing Setup - Must be first
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.aiohttp import AioHTTPClientInstrumentor
+from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+# Configure tracing
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(
+        OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
+    )
+)
+
+# Instrument libraries
+AioHTTPClientInstrumentor().instrument()
+AsyncioInstrumentor().instrument()
+
+# Standard library imports
 import asyncio
 import json
 import logging
 import os
 from datetime import datetime
-from decimal import Decimal
+from typing import Dict, List, Optional
 
-from infrastructure import NodeConfig, ChainHealth
+# Third-party imports
+from fastapi import FastAPI, HTTPException, Path, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# Local imports
 from arbitrage_backend import ArbitrageEngine
-
-from database.connection import get_db_manager, get_db_session
 from database.cache import get_redis_cache
+from database.connection import get_db_manager
 from database.repository import (
-    OpportunityRepository,
-    ExecutionRepository,
-    StatsRepository,
-    GasPriceRepository,
     AlertRepository,
     ChainMetricRepository,
+    ExecutionRepository,
+    GasPriceRepository,
+    OpportunityRepository,
+    StatsRepository,
 )
+from infrastructure import ChainHealth
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +71,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Instrument FastAPI for tracing
+FastAPIInstrumentor.instrument_app(app)
 
 # ============================================================================
 # DATA MODELS
@@ -214,7 +239,11 @@ manager = ConnectionManager()
 @app.get("/")
 async def root():
     """API health check"""
-    return {"status": "online", "version": "5.0", "bot_running": bot_state.is_running}
+    return {
+        "status": "online",
+        "version": "5.0",
+        "bot_running": bot_state.is_running
+    }
 
 
 @app.get("/api/opportunities", response_model=List[OpportunityResponse])

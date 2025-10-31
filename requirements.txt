@@ -38,5 +38,12 @@ mypy==1.7.1
 # Logging
 python-json-logger==2.0.7
 
+# OpenTelemetry Tracing
+opentelemetry-distro==0.43b0
+opentelemetry-instrumentation-fastapi==0.24b0
+opentelemetry-instrumentation-aiohttp==0.24b0
+opentelemetry-instrumentation-asyncio==0.24b0
+opentelemetry-exporter-otlp-proto-http==1.22.0
+
 # Optional: Advanced Features
 sqlalchemy==2.0.23

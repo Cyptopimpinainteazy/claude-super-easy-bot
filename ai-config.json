@@ -1,0 +1,166 @@
+{
+  "aiAssistants": {
+    "githubCopilot": {
+      "enabled": true,
+      "model": "gpt-4",
+      "features": {
+        "inlineCompletions": true,
+        "chat": true,
+        "codeActions": true,
+        "pullRequestDescriptions": true
+      },
+      "languages": ["python", "typescript", "solidity", "javascript"],
+      "autoTrigger": {
+        "comments": true,
+        "strings": true,
+        "functions": true
+      }
+    },
+    "tabnine": {
+      "enabled": true,
+      "model": "deep-tabnine",
+      "features": {
+        "completions": true,
+        "autoImports": true,
+        "codeReview": true
+      },
+      "languages": ["python", "javascript", "typescript", "solidity"],
+      "cloudEnabled": true
+    },
+    "codeium": {
+      "enabled": true,
+      "model": "codeium-base",
+      "features": {
+        "completions": true,
+        "codeLens": true,
+        "chat": true
+      },
+      "languages": ["python", "typescript", "solidity", "javascript"],
+      "telemetry": false
+    },
+    "continue": {
+      "enabled": true,
+      "model": "claude-3-sonnet",
+      "features": {
+        "chat": true,
+        "edit": true,
+        "actions": true
+      },
+      "contextWindow": 200000,
+      "temperature": 0.7
+    },
+    "cody": {
+      "enabled": true,
+      "model": "claude-3-haiku",
+      "features": {
+        "autocomplete": true,
+        "chat": true,
+        "commands": true,
+        "guardrails": true
+      },
+      "serverEndpoint": "https://api.sourcegraph.com",
+      "accessToken": "${SOURCEGRAPH_TOKEN}"
+    },
+    "windowsAIStudio": {
+      "enabled": true,
+      "device": "auto",
+      "models": {
+        "phi-2": {
+          "path": "",
+          "contextLength": 2048,
+          "temperature": 0.7
+        },
+        "codellama": {
+          "path": "",
+          "contextLength": 4096,
+          "temperature": 0.1
+        }
+      }
+    }
+  },
+  "blockchainTools": {
+    "solidity": {
+      "compiler": "localNodeModule",
+      "version": "latest",
+      "optimization": true,
+      "runs": 200,
+      "evmVersion": "london",
+      "viaIR": false
+    },
+    "hardhat": {
+      "telemetry": false,
+      "networks": {
+        "hardhat": {
+          "chainId": 31337
+        },
+        "localhost": {
+          "url": "http://127.0.0.1:8545",
+          "chainId": 31337
+        }
+      },
+      "solidity": {
+        "version": "0.8.19",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          }
+        }
+      }
+    },
+    "auditor": {
+      "enabled": true,
+      "rules": {
+        "reentrancy": "error",
+        "integer-overflow": "warning",
+        "unchecked-call": "warning",
+        "state-change": "info"
+      },
+      "severity": {
+        "error": ["reentrancy", "integer-overflow"],
+        "warning": ["unchecked-call", "state-change"],
+        "info": ["gas-optimization"]
+      }
+    },
+    "ethover": {
+      "enabled": true,
+      "features": {
+        "gasEstimates": true,
+        "contractSize": true,
+        "functionSignatures": true
+      }
+    }
+  },
+  "automation": {
+    "autoSave": "afterDelay",
+    "autoSaveDelay": 1000,
+    "formatOnSave": true,
+    "formatOnType": true,
+    "organizeImports": true,
+    "fixOnSave": true,
+    "codeActionsOnSave": {
+      "source.fixAll": true,
+      "source.organizeImports": true
+    }
+  },
+  "testing": {
+    "aiExtensions": {
+      "testCompletions": true,
+      "testChat": true,
+      "testCodeActions": true,
+      "performanceMetrics": true
+    },
+    "blockchainExtensions": {
+      "testCompilation": true,
+      "testAuditing": true,
+      "testGasEstimation": true,
+      "validateContracts": true
+    },
+    "automationTests": {
+      "formatValidation": true,
+      "lintValidation": true,
+      "typeCheckValidation": true,
+      "importOrganization": true
+    }
+  }
+}
