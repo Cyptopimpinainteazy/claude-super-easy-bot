@@ -21,7 +21,7 @@ pydantic==2.5.2
 
 # Data Processing
 pandas==2.1.3
-numpy==1.26.2
+numpy==2.0.2
 python-dateutil==2.8.2
 
 # Async Support
