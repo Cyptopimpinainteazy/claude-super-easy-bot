@@ -24,6 +24,18 @@ from infrastructure import (
     NoHealthyEndpointsError,
 )
 
+from database.connection import get_db_manager
+from database.cache import get_redis_cache
+from database.repository import (
+    OpportunityRepository,
+    ExecutionRepository,
+    StatsRepository,
+    GasPriceRepository,
+    AlertRepository,
+    ChainMetricRepository,
+)
+from database.models import RiskLevel
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -425,11 +437,34 @@ class ArbitrageEngine:
             "trades_executed": 0,
             "total_profit": Decimal("0"),
         }
+        
+        # Database and cache managers
+        self.db_manager = get_db_manager()
+        self.redis_cache = get_redis_cache()
+        self.opportunity_repo = OpportunityRepository(self.db_manager)
+        self.execution_repo = ExecutionRepository(self.db_manager)
+        self.stats_repo = StatsRepository(self.db_manager)
+        self.gas_price_repo = GasPriceRepository(self.db_manager)
+        self.alert_repo = AlertRepository(self.db_manager)
+        self.chain_metric_repo = ChainMetricRepository(self.db_manager)
+        
+        # Tracking for stats snapshot timing
+        self.last_stats_snapshot = time.time()
+        self.stats_snapshot_interval = 60  # Update stats every 60 seconds
 
     async def initialize(self):
         """Initialize connections and monitoring."""
         logger.info("Initializing arbitrage engine...")
         await self.blockchain_manager.initialize()
+        
+        # Initialize database
+        try:
+            await self.db_manager.initialize()
+            await self.db_manager.create_tables()
+            await self.db_manager.setup_timescale_hypertables()
+            logger.info("✓ Database initialized and ready")
+        except Exception as e:
+            logger.error(f"⚠️  Database initialization failed (continuing without persistence): {e}")
 
         # Register health alert callback
         self.health_monitor.register_alert_callback(self._on_health_update)
@@ -439,6 +474,90 @@ class ArbitrageEngine:
     def _on_health_update(self, health_status):
         """Callback for health monitor updates."""
         logger.info(f"Health update: {health_status.overall_status.value}")
+
+    async def _persist_opportunities(self, opportunities: List[ArbitrageOpportunity]):
+        """Persist opportunities to database and cache"""
+        if not opportunities:
+            return
+        
+        try:
+            # Persist to database
+            for opp in opportunities:
+                await self.opportunity_repo.create(
+                    opportunity_id=f"{opp.chain}_{opp.pair}_{int(time.time())}",
+                    chain=opp.chain,
+                    pair=opp.pair,
+                    buy_exchange=opp.buy_exchange,
+                    sell_exchange=opp.sell_exchange,
+                    buy_price=opp.buy_price,
+                    sell_price=opp.sell_price,
+                    spread=opp.spread_percent,
+                    gross_profit=opp.gross_profit,
+                    net_profit=opp.net_profit,
+                    confidence=opp.confidence,
+                    risk_level=opp.risk_level.lower(),
+                    flash_loan_available=getattr(opp, "flash_loan_available", False),
+                    detected_at=datetime.utcnow(),
+                )
+            
+            # Cache top opportunities for quick API access
+            await self.redis_cache.cache_opportunities(opportunities)
+            
+            logger.debug(f"✓ Persisted {len(opportunities)} opportunities to database and cache")
+        except Exception as e:
+            logger.warning(f"Failed to persist opportunities: {e}")
+
+    async def _update_stats_snapshot(self):
+        """Update statistics snapshot in database"""
+        try:
+            if time.time() - self.last_stats_snapshot < self.stats_snapshot_interval:
+                return
+            
+            # Create stats snapshot
+            await self.stats_repo.create_snapshot(
+                total_scans=self.stats["total_scans"],
+                opportunities_found=self.stats["opportunities_found"],
+                trades_executed=self.stats["trades_executed"],
+                successful_trades=self.stats.get("successful_trades", 0),
+                failed_trades=self.stats.get("failed_trades", 0),
+                total_profit=float(self.stats["total_profit"]),
+                gas_spent=float(self.stats.get("gas_spent", 0)),
+                net_profit=float(self.stats.get("net_profit", 0)),
+                success_rate=float(self.stats.get("success_rate", 0)),
+                avg_profit_per_trade=float(self.stats.get("avg_profit_per_trade", 0)),
+                max_drawdown=float(self.stats.get("max_drawdown", 0)),
+                sharpe_ratio=float(self.stats.get("sharpe_ratio", 0)),
+                active_capital=float(self.stats.get("active_capital", 0)),
+            )
+            
+            self.last_stats_snapshot = time.time()
+            logger.debug("✓ Stats snapshot saved to database")
+        except Exception as e:
+            logger.warning(f"Failed to update stats snapshot: {e}")
+
+    async def _record_chain_metrics(self):
+        """Record chain health metrics to database"""
+        try:
+            for chain in self.node_config.get_all_chains():
+                try:
+                    w3 = await self.blockchain_manager.get_http_web3(chain)
+                    if not w3:
+                        continue
+                    
+                    block = w3.eth.block_number
+                    peer_count = len(w3.net.peer_count) if hasattr(w3.net, 'peer_count') else 0
+                    
+                    await self.chain_metric_repo.record(
+                        chain=chain,
+                        block_number=block,
+                        peer_count=peer_count,
+                        is_syncing=False,
+                        sync_progress=100.0,
+                        response_time_ms=0,
+                        status="healthy",
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not record metrics for {chain}: {e}")
 
     async def start_mempool_monitoring(self, chains: Optional[List[str]] = None):
         """
@@ -489,6 +608,15 @@ class ArbitrageEngine:
                 # Update stats
                 self.stats["total_scans"] += 1
                 self.stats["opportunities_found"] += len(opportunities)
+
+                # Persist opportunities to database and cache
+                await self._persist_opportunities(opportunities)
+                
+                # Update stats snapshot periodically
+                await self._update_stats_snapshot()
+                
+                # Record chain metrics
+                await self._record_chain_metrics()
 
                 # Display results
                 logger.info(
@@ -547,7 +675,20 @@ class ArbitrageEngine:
             except Exception as e:
                 logger.error(f"Error unsubscribing from {chain}: {e}")
 
-        # Close connections
+        # Final stats snapshot
+        try:
+            await self._update_stats_snapshot()
+        except Exception as e:
+            logger.debug(f"Could not save final stats snapshot: {e}")
+
+        # Close database connections
+        try:
+            await self.db_manager.close()
+            logger.info("✓ Database connections closed")
+        except Exception as e:
+            logger.debug(f"Error closing database: {e}")
+
+        # Close blockchain manager connections
         await self.blockchain_manager.close()
         logger.info("✓ Cleanup complete")
 

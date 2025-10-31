@@ -4,7 +4,7 @@ ARBITRAGE BOT API SERVER
 FastAPI server to connect backend arbitrage engine with frontend dashboard
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -17,6 +17,17 @@ from decimal import Decimal
 
 from infrastructure import NodeConfig, ChainHealth
 from arbitrage_backend import ArbitrageEngine
+
+from database.connection import get_db_manager, get_db_session
+from database.cache import get_redis_cache
+from database.repository import (
+    OpportunityRepository,
+    ExecutionRepository,
+    StatsRepository,
+    GasPriceRepository,
+    AlertRepository,
+    ChainMetricRepository,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -137,24 +148,23 @@ class BotState:
 
     def __init__(self):
         self.is_running = False
-        self.opportunities = []
-        self.stats = {
-            "totalPnL": 12847.63,
-            "todayPnL": 456.89,
-            "successRate": 87.3,
-            "totalTrades": 1247,
-            "averageProfit": 23.45,
-            "maxDrawdown": -156.80,
-            "winRate": 89.2,
-            "avgExecutionTime": 2.3,
-            "gasEfficiency": 92.5,
-            "sharpeRatio": 2.34,
-            "maxConsecutiveWins": 17,
-            "activeCapital": 25000.0,
-        }
         self.connected_clients = set()
         self.engine: Optional[ArbitrageEngine] = None
         self.last_health_update: Optional[ChainHealth] = None
+        
+        # Database and cache managers
+        self.db_manager = get_db_manager()
+        self.redis_cache = get_redis_cache()
+        self.opportunity_repo: Optional[OpportunityRepository] = None
+        self.execution_repo: Optional[ExecutionRepository] = None
+        self.stats_repo: Optional[StatsRepository] = None
+        self.gas_price_repo: Optional[GasPriceRepository] = None
+        self.alert_repo: Optional[AlertRepository] = None
+        self.chain_metric_repo: Optional[ChainMetricRepository] = None
+        
+        # Rate limiting state
+        self.execution_rate_limit_key = "api:executions:rate_limit"
+        self.max_executions_per_minute = 10
 
 
 bot_state = BotState()
@@ -209,14 +219,102 @@ async def root():
 
 @app.get("/api/opportunities", response_model=List[OpportunityResponse])
 async def get_opportunities():
-    """Get current arbitrage opportunities"""
-    return bot_state.opportunities
+    """Get current arbitrage opportunities from cache/database"""
+    try:
+        # Try to get from Redis cache first
+        cached_opps = await bot_state.redis_cache.get("opportunities:recent")
+        if cached_opps:
+            return json.loads(cached_opps)
+        
+        # If cache miss, query database
+        if bot_state.opportunity_repo:
+            opps = await bot_state.opportunity_repo.get_recent(limit=50)
+            
+            # Convert to response format
+            response_opps = []
+            for opp in opps:
+                response_opps.append(OpportunityResponse(
+                    id=str(opp.id),
+                    pair=opp.pair,
+                    chain=opp.chain,
+                    buyExchange=opp.buy_exchange,
+                    sellExchange=opp.sell_exchange,
+                    buyPrice=float(opp.buy_price),
+                    sellPrice=float(opp.sell_price),
+                    spread=float(opp.spread),
+                    profit=float(opp.gross_profit),
+                    gasEstimate=float(opp.gross_profit - opp.net_profit),
+                    netProfit=float(opp.net_profit),
+                    volume24h=0.0,
+                    liquidity=0.0,
+                    confidence=float(opp.confidence),
+                    risk=opp.risk_level.upper(),
+                    flashLoanAvailable=opp.flash_loan_available,
+                ))
+            
+            # Cache result for 10 seconds
+            await bot_state.redis_cache.set(
+                "opportunities:recent",
+                json.dumps([o.dict() for o in response_opps]),
+                ttl=10
+            )
+            
+            return response_opps
+        
+        return []
+    except Exception as e:
+        logger.warning(f"Error fetching opportunities: {e}")
+        return []
 
 
 @app.get("/api/stats", response_model=StatsResponse)
 async def get_stats():
-    """Get bot statistics"""
-    return bot_state.stats
+    """Get bot statistics from database or cache"""
+    try:
+        # Try to get from Redis cache first
+        cached_stats = await bot_state.redis_cache.get("bot:stats:current")
+        if cached_stats:
+            stats_data = json.loads(cached_stats)
+            return StatsResponse(**stats_data)
+        
+        # Query database for latest stats
+        if bot_state.stats_repo:
+            latest_stats = await bot_state.stats_repo.get_latest()
+            
+            if latest_stats:
+                stats_data = {
+                    "totalPnL": float(latest_stats.total_profit),
+                    "todayPnL": float(latest_stats.total_profit) * 0.1,  # Approximation
+                    "successRate": float(latest_stats.success_rate) if latest_stats.success_rate else 0.0,
+                    "totalTrades": latest_stats.trades_executed,
+                    "averageProfit": float(latest_stats.avg_profit_per_trade) if latest_stats.avg_profit_per_trade else 0.0,
+                    "maxDrawdown": float(latest_stats.max_drawdown) if latest_stats.max_drawdown else 0.0,
+                    "winRate": float(latest_stats.success_rate) if latest_stats.success_rate else 0.0,
+                    "avgExecutionTime": 0.0,
+                    "gasEfficiency": 0.0,
+                    "sharpeRatio": float(latest_stats.sharpe_ratio) if latest_stats.sharpe_ratio else 0.0,
+                    "maxConsecutiveWins": 0,
+                    "activeCapital": float(latest_stats.active_capital) if latest_stats.active_capital else 0.0,
+                }
+                
+                # Cache for 5 seconds
+                await bot_state.redis_cache.set("bot:stats:current", json.dumps(stats_data), ttl=5)
+                
+                return StatsResponse(**stats_data)
+        
+        # Return default stats if no data available
+        return StatsResponse(
+            totalPnL=0.0, todayPnL=0.0, successRate=0.0, totalTrades=0,
+            averageProfit=0.0, maxDrawdown=0.0, winRate=0.0, avgExecutionTime=0.0,
+            gasEfficiency=0.0, sharpeRatio=0.0, maxConsecutiveWins=0, activeCapital=0.0
+        )
+    except Exception as e:
+        logger.warning(f"Error fetching stats: {e}")
+        return StatsResponse(
+            totalPnL=0.0, todayPnL=0.0, successRate=0.0, totalTrades=0,
+            averageProfit=0.0, maxDrawdown=0.0, winRate=0.0, avgExecutionTime=0.0,
+            gasEfficiency=0.0, sharpeRatio=0.0, maxConsecutiveWins=0, activeCapital=0.0
+        )
 
 
 @app.post("/api/bot/start")

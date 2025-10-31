@@ -14,8 +14,7 @@ from decimal import Decimal
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -29,8 +28,8 @@ from sqlalchemy import delete, select, func, and_
 
 async def cleanup_opportunities():
     """Delete opportunities older than retention period"""
-    retention_days = int(os.getenv('OPPORTUNITIES_RETENTION_DAYS', '7'))
-    dry_run = os.getenv('DRY_RUN', 'false').lower() == 'true'
+    retention_days = int(os.getenv("OPPORTUNITIES_RETENTION_DAYS", "7"))
+    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
 
     db_manager = get_db_manager()
     cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
@@ -46,7 +45,9 @@ async def cleanup_opportunities():
             count = count_result.scalar() or 0
 
             if count == 0:
-                logger.info(f"✓ No opportunities to delete (older than {retention_days} days)")
+                logger.info(
+                    f"✓ No opportunities to delete (older than {retention_days} days)"
+                )
                 return
 
             logger.info(f"Found {count} opportunities to delete")
@@ -68,8 +69,8 @@ async def cleanup_opportunities():
 
 async def cleanup_alerts():
     """Delete acknowledged alerts older than retention period"""
-    retention_days = int(os.getenv('ALERTS_RETENTION_DAYS', '30'))
-    dry_run = os.getenv('DRY_RUN', 'false').lower() == 'true'
+    retention_days = int(os.getenv("ALERTS_RETENTION_DAYS", "30"))
+    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
 
     db_manager = get_db_manager()
     cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
@@ -79,10 +80,7 @@ async def cleanup_alerts():
             # Count records to delete
             count_result = await session.execute(
                 select(func.count(Alert.id)).where(
-                    and_(
-                        Alert.created_at < cutoff_date,
-                        Alert.acknowledged == True
-                    )
+                    and_(Alert.created_at < cutoff_date, Alert.acknowledged == True)
                 )
             )
             count = count_result.scalar() or 0
@@ -97,10 +95,7 @@ async def cleanup_alerts():
                 # Delete alerts
                 await session.execute(
                     delete(Alert).where(
-                        and_(
-                            Alert.created_at < cutoff_date,
-                            Alert.acknowledged == True
-                        )
+                        and_(Alert.created_at < cutoff_date, Alert.acknowledged == True)
                     )
                 )
                 await session.commit()
@@ -115,8 +110,8 @@ async def cleanup_alerts():
 
 async def cleanup_chain_metrics():
     """Delete chain metrics older than retention period"""
-    retention_days = int(os.getenv('CHAIN_METRICS_RETENTION_DAYS', '7'))
-    dry_run = os.getenv('DRY_RUN', 'false').lower() == 'true'
+    retention_days = int(os.getenv("CHAIN_METRICS_RETENTION_DAYS", "7"))
+    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
 
     db_manager = get_db_manager()
     cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
@@ -132,7 +127,9 @@ async def cleanup_chain_metrics():
             count = count_result.scalar() or 0
 
             if count == 0:
-                logger.info(f"✓ No chain metrics to delete (older than {retention_days} days)")
+                logger.info(
+                    f"✓ No chain metrics to delete (older than {retention_days} days)"
+                )
                 return
 
             logger.info(f"Found {count} chain metrics to delete")
@@ -154,8 +151,8 @@ async def cleanup_chain_metrics():
 
 async def cleanup_gas_prices():
     """Delete gas prices older than retention period"""
-    retention_days = int(os.getenv('GAS_PRICES_RETENTION_DAYS', '30'))
-    dry_run = os.getenv('DRY_RUN', 'false').lower() == 'true'
+    retention_days = int(os.getenv("GAS_PRICES_RETENTION_DAYS", "30"))
+    dry_run = os.getenv("DRY_RUN", "false").lower() == "true"
 
     db_manager = get_db_manager()
     cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
@@ -164,14 +161,14 @@ async def cleanup_gas_prices():
         async with db_manager.get_session() as session:
             # Count records to delete
             count_result = await session.execute(
-                select(func.count(GasPrice.id)).where(
-                    GasPrice.timestamp < cutoff_date
-                )
+                select(func.count(GasPrice.id)).where(GasPrice.timestamp < cutoff_date)
             )
             count = count_result.scalar() or 0
 
             if count == 0:
-                logger.info(f"✓ No gas prices to delete (older than {retention_days} days)")
+                logger.info(
+                    f"✓ No gas prices to delete (older than {retention_days} days)"
+                )
                 return
 
             logger.info(f"Found {count} gas prices to delete")
@@ -223,5 +220,5 @@ async def main():
         await db_manager.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
