@@ -4,7 +4,7 @@ uvicorn[standard]==0.24.0
 websockets==12.0
 
 # Blockchain
-web3==6.11.3
+web3==7.14.0
 eth-account==0.9.0
 eth-utils==2.3.1
 eth-abi==4.2.1
