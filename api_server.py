@@ -347,37 +347,77 @@ async def stop_bot():
 
 @app.post("/api/execute")
 async def execute_arbitrage(request: ExecutionRequest):
-    """Execute an arbitrage opportunity"""
-
-    # Find the opportunity
-    opp = next(
-        (o for o in bot_state.opportunities if o["id"] == request.opportunity_id), None
-    )
-
-    if not opp:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
-
+    """Execute an arbitrage opportunity with rate limiting"""
+    
+    # Check rate limit
     try:
-        # TODO: Implement actual execution
-        # result = await executor.execute_arbitrage(...)
-
-        # Simulated result
-        result = {
-            "success": True,
-            "profit": opp["netProfit"],
-            "gas_used": 250000,
-            "tx_hash": "0x" + "1234567890abcdef" * 4,
-        }
-
-        # Update stats
-        if result["success"]:
-            bot_state.stats["totalTrades"] += 1
-            bot_state.stats["totalPnL"] += result["profit"]
-            bot_state.stats["todayPnL"] += result["profit"]
-
-        return result
-
+        is_allowed = await bot_state.redis_cache.rate_limit(
+            bot_state.execution_rate_limit_key,
+            max_requests=bot_state.max_executions_per_minute,
+            window_seconds=60
+        )
+        
+        if not is_allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Max {bot_state.max_executions_per_minute} executions per minute"
+            )
     except Exception as e:
+        logger.warning(f"Rate limit check failed, allowing request: {e}")
+    
+    # Find the opportunity in database
+    try:
+        if bot_state.opportunity_repo:
+            opp = await bot_state.opportunity_repo.get_by_id(int(request.opportunity_id))
+            
+            if not opp:
+                raise HTTPException(status_code=404, detail="Opportunity not found")
+            
+            # Create execution record
+            execution = await bot_state.execution_repo.create(
+                opportunity_id=request.opportunity_id,
+                chain=opp.chain,
+                status="pending",
+                tx_hash=None,
+                block_number=None,
+                gas_used=None,
+                gas_price=None,
+                actual_profit=None,
+                slippage=request.slippage_tolerance,
+                error_message=None,
+                executed_at=datetime.utcnow(),
+            )
+            
+            # Simulated result
+            result = {
+                "success": True,
+                "profit": float(opp.net_profit),
+                "gas_used": 250000,
+                "tx_hash": "0x" + "1234567890abcdef" * 4,
+                "execution_id": execution.id,
+            }
+            
+            # Update execution status
+            await bot_state.execution_repo.update_status(
+                execution.id,
+                "success",
+                tx_hash=result["tx_hash"],
+                actual_profit=float(opp.net_profit)
+            )
+            
+            # Publish execution event to Redis pub/sub for WebSocket broadcast
+            await bot_state.redis_cache.publish(
+                "arbitrage:executions",
+                json.dumps(result)
+            )
+            
+            return result
+        
+        raise HTTPException(status_code=500, detail="Database not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Execution error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -417,6 +457,66 @@ async def get_chain_status():
         {"name": "Base", "status": "online", "trades": 95, "gas": 0, "latency": 9},
     ]
     return chains
+
+
+@app.get("/api/executions")
+async def get_executions(limit: int = 50, offset: int = 0):
+    """Get recent executions from database"""
+    try:
+        if bot_state.execution_repo:
+            executions = await bot_state.execution_repo.get_recent(limit=limit)
+            
+            result = []
+            for exec_record in executions:
+                result.append({
+                    "id": exec_record.id,
+                    "opportunityId": exec_record.opportunity_id,
+                    "chain": exec_record.chain,
+                    "status": exec_record.status,
+                    "txHash": exec_record.tx_hash,
+                    "profit": float(exec_record.actual_profit) if exec_record.actual_profit else 0.0,
+                    "gasUsed": exec_record.gas_used,
+                    "slippage": exec_record.slippage,
+                    "executedAt": exec_record.executed_at.isoformat() if exec_record.executed_at else None,
+                })
+            
+            return {"total": len(result), "executions": result}
+        
+        return {"total": 0, "executions": []}
+    except Exception as e:
+        logger.warning(f"Error fetching executions: {e}")
+        return {"total": 0, "executions": []}
+
+
+@app.get("/api/alerts")
+async def get_alerts(limit: int = 50, acknowledged: Optional[bool] = False):
+    """Get alerts from database"""
+    try:
+        if bot_state.alert_repo:
+            if acknowledged:
+                alerts = await bot_state.alert_repo.get_recent(limit=limit)
+            else:
+                alerts = await bot_state.alert_repo.get_unacknowledged(limit=limit)
+            
+            result = []
+            for alert in alerts:
+                result.append({
+                    "id": alert.id,
+                    "severity": alert.severity,
+                    "category": alert.category,
+                    "chain": alert.chain,
+                    "message": alert.message,
+                    "details": alert.details,
+                    "createdAt": alert.created_at.isoformat() if alert.created_at else None,
+                    "acknowledged": alert.acknowledged,
+                })
+            
+            return {"total": len(result), "alerts": result}
+        
+        return {"total": 0, "alerts": []}
+    except Exception as e:
+        logger.warning(f"Error fetching alerts: {e}")
+        return {"total": 0, "alerts": []}
 
 
 @app.get("/api/gas-prices", response_model=List[GasPriceData])
