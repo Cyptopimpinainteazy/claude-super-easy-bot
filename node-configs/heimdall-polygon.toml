@@ -1,0 +1,103 @@
+# This is a TOML config file for Heimdall
+
+[tendermint]
+LogLevel = "info"
+FastSync = true
+FastSyncMinIsr = 10
+FastSyncMaxBlockChunks = 200
+
+[p2p]
+ListenAddress = "tcp://0.0.0.0:26656"
+ExternalAddress = ""
+Laddr = "tcp://0.0.0.0:26656"
+Seeds = ""
+PersistentPeers = ""
+UpstreamNodes = ""
+UPNP = false
+AddrBook = "config/addrbook.json"
+MaxNumInboundPeers = 40
+MaxNumOutboundPeers = 10
+UnconditionalPeerIds = ""
+PersistentPeersMaxDialPeriod = "0s"
+FlushThrottleTimeout = "100ms"
+MaxPacketMsgPayloadSize = 1400
+SendRate = 5120000
+RecvRate = 5120000
+TimeoutConnect = "10s"
+TimeoutReadyTimeout = "10s"
+TimeoutHandshake = "20s"
+TestDialFail = false
+TestFuzz = false
+TestFuzzConfig = ""
+AllowDuplicateIP = false
+HandshakeWaitTime = "20s"
+DialTimeout = "3s"
+TestMempoolConn = false
+TestRecvTx = false
+
+[rpc]
+Laddr = "tcp://0.0.0.0:26657"
+CORSAllowedOrigins = []
+CORSAllowedMethods = ["HEAD", "GET", "POST"]
+CORSAllowedHeaders = ["Origin", "Accept", "Content-Type", "X-Requested-With", "X-Server-Time"]
+GrpcLaddr = ""
+TLSCertFile = ""
+TLSKeyFile = ""
+MaxOpenConnections = 900
+MaxSubscriptionClients = 100
+MaxSubscriptionsPerClient = 5
+TimeoutBroadcastTxCommit = "10s"
+TimeoutBroadcastTx = "10s"
+TLSMinVersion = ""
+
+[mempool]
+Version = "v0"
+Recheck = true
+Broadcast = true
+WalSize = 67108864
+MaxTxsBytes = 1073741824
+CacheSize = 10000
+MaxTxBytes = 1048576
+TxEnqueueTimeout = "-1ns"
+TxDequeueBytes = 33554432
+TxDequeueTimeout = "5s"
+TxHashCache = 10000
+MaxBatchBytes = 0
+WaitTimeout = "5ms"
+MaxWaitTxs = 5000
+
+[consensus]
+RootDir = "."
+WalPath = "data/cs.wal/wal"
+TimeoutPropose = "3s"
+TimeoutProposeDelta = "500ms"
+TimeoutPrevote = "1s"
+TimeoutPrevoteDelta = "500ms"
+TimeoutPrecommit = "1s"
+TimeoutPrecommitDelta = "500ms"
+TimeoutCommit = "5s"
+SkipTimeoutCommit = false
+CreateEmptyBlocksInterval = "0s"
+CreateEmptyBlocks = true
+DbBackend = "goleveldb"
+DbDir = "data"
+AbciResponseCheckTx = false
+
+[tx_index]
+Indexer = "kv"
+IndexKeys = ""
+IndexAllKeys = true
+IndexTags = ""
+SaveKeysIndexTag = false
+HistoricKeysIndexTag = false
+
+[instrumentation]
+Prometheus = false
+PrometheusListenAddr = ":26660"
+MaxOpenConnections = 3
+Namespace = "tendermint"
+LabelIndexTags = ""
+LabelIndexKeys = ""
+PrometheusRetentionPeriod = 0
+UnsafeProfile = false
+UnsafeProfileRate = 97656

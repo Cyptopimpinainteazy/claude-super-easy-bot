@@ -1,0 +1,63 @@
+[Eth]
+NetworkId = 137
+SyncMode = "snap"
+NoPruning = false
+NoPrefetch = false
+TxPool = "eth"
+
+[Eth.Miner]
+GasPrice = 0
+Recommit = 3000000000000
+GasFloor = 8500000
+GasCeil = 30000000
+
+[Eth.TxPool]
+Journal = "transactions.rlp"
+Rejournal = 3600000000000
+PriceLimit = 1
+PriceBump = 10
+AccountSlots = 16
+GlobalSlots = 4096
+AccountQueue = 64
+GlobalQueue = 1024
+Lifetime = 10800000000000
+
+[Node]
+DataDir = "/root/.bor"
+IPCPath = "bor.ipc"
+HTTPHost = "0.0.0.0"
+HTTPPort = 8545
+HTTPVirtualHosts = ["*"]
+HTTPModules = ["eth", "net", "web3", "personal"]
+WSHost = "0.0.0.0"
+WSPort = 8546
+WSModules = ["eth", "net", "web3"]
+MaxPeers = 50
+MaxPendingPeers = 0
+Listener = ":30303"
+DBPath = "/root/.bor/chaindata"
+
+[Node.Logger]
+Format = "json"
+Level = "info"
+
+[Metrics]
+HTTP = "0.0.0.0"
+Port = 6060
+Enabled = true
+
+[P2P]
+MaxPeers = 50
+BootstrapNodes = [
+  "enode://0cb82b395094ee4a7919f3cfdb3614861d6acb87df904cdbe9b751246737f033e405c3714c0f19547e0aod9bc63e6aea47523c8e13c137d4b26daddb8f0bdcd@34.65.6.228:30303",
+  "enode://7ee01c4de78e25327857db48925d6b1843569242a17ff4af2339a8a3579db7a3709a1996d596131f41559f05e490bcb33224ca867f39642b120ce988666b328@34.67.229.78:30303"
+]
+StaticNodes = []
+TrustedNodes = []
+ListenAddr = ":30303"
+
+[Heimdall]
+Url = "http://polygon-heimdall:26657"
+PollInterval = "512ms"
+CheckpointInterval = 256
+SprinklerInterval = "16m8s"

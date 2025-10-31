@@ -1,0 +1,242 @@
+version: '3.8'
+
+services:
+  # Ethereum Execution Layer
+  ethereum-node:
+    image: ethereum/client-go:latest
+    container_name: ethereum-node
+    command: --mainnet --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 --ws --ws.addr=0.0.0.0 --ws.port=8546 --ws.api=eth,net,web3 --authrpc.port=8551 --metrics --metrics.addr=0.0.0.0 --metrics.port=6060
+    ports:
+      - "8545:8545"    # HTTP RPC
+      - "8546:8546"    # WebSocket RPC
+      - "6060:6060"    # Metrics
+      - "30303:30303"  # P2P port
+    volumes:
+      - ethereum_data:/root/.ethereum
+    networks:
+      - blockchain_net
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:8545 -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - GOGC=75
+
+  # Polygon Heimdall (Consensus)
+  polygon-heimdall:
+    image: 0xpolygon/heimdall:latest
+    container_name: polygon-heimdall
+    ports:
+      - "26657:26657"  # RPC
+      - "26656:26656"  # P2P
+    volumes:
+      - polygon_heimdall_data:/root/.heimdalld
+      - ./node-configs/heimdall-polygon.toml:/root/.heimdalld/config/heimdall-config.toml:ro
+    networks:
+      - blockchain_net
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:26657/status || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - CHAIN_ID=mainnet-v0
+      - HEIMDALL_NETWORK=mainnet
+
+  # Polygon Bor (Execution)
+  polygon-bor:
+    image: 0xpolygon/bor:latest
+    container_name: polygon-bor
+    command: server --config=/root/.bor/config.toml
+    ports:
+      - "8547:8545"    # HTTP RPC
+      - "8548:8546"    # WebSocket RPC
+      - "30304:30303"  # P2P port
+      - "6061:6060"    # Metrics
+    volumes:
+      - polygon_bor_data:/root/.bor
+      - ./node-configs/bor-polygon.toml:/root/.bor/config.toml:ro
+    networks:
+      - blockchain_net
+    depends_on:
+      - polygon-heimdall
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:8545 -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - GOGC=75
+
+  # Arbitrum Node
+  arbitrum-node:
+    image: offchainlabs/arb-node:latest
+    container_name: arbitrum-node
+    command: --mainnet --http.addr=0.0.0.0 --http.port=8545 --http.vhosts=* --ws.addr=0.0.0.0 --ws.port=8546 --metrics --metrics.addr=0.0.0.0 --metrics.port=6060
+    ports:
+      - "8549:8545"    # HTTP RPC
+      - "8550:8546"    # WebSocket RPC
+      - "6062:6060"    # Metrics
+      - "30305:30303"  # P2P port
+    volumes:
+      - arbitrum_data:/home/user/.arbitrum
+    networks:
+      - blockchain_net
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:8545 -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    user: "1000"
+
+  # BSC Node
+  bsc-node:
+    image: ethereum/client-go:latest
+    container_name: bsc-node
+    command: --bsc --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 --ws --ws.addr=0.0.0.0 --ws.port=8546 --ws.api=eth,net,web3 --authrpc.port=8551 --metrics --metrics.addr=0.0.0.0 --metrics.port=6060
+    ports:
+      - "8551:8545"    # HTTP RPC
+      - "8552:8546"    # WebSocket RPC
+      - "6063:6060"    # Metrics
+      - "30306:30303"  # P2P port
+    volumes:
+      - bsc_data:/root/.ethereum
+    networks:
+      - blockchain_net
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:8545 -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - GOGC=75
+
+  # Avalanche Node
+  avalanche-node:
+    image: ava-labs/avalanchego:latest
+    container_name: avalanche-node
+    ports:
+      - "9650:9650"    # HTTP RPC
+      - "9651:9651"    # Secure HTTP RPC
+      - "6064:6060"    # Metrics
+      - "9651:9651"    # P2P port
+    volumes:
+      - avalanche_data:/root/.avalanchego
+    networks:
+      - blockchain_net
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:9650/ext/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - AVAX_CORETH_METRICS=true
+
+  # Base Node
+  base-node:
+    image: ethereum/client-go:latest
+    container_name: base-node
+    command: --base --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3 --ws --ws.addr=0.0.0.0 --ws.port=8546 --ws.api=eth,net,web3 --authrpc.port=8551 --metrics --metrics.addr=0.0.0.0 --metrics.port=6060
+    ports:
+      - "8553:8545"    # HTTP RPC
+      - "8554:8546"    # WebSocket RPC
+      - "6065:6060"    # Metrics
+      - "30307:30303"  # P2P port
+    volumes:
+      - base_data:/root/.ethereum
+    networks:
+      - blockchain_net
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:8545 -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - GOGC=75
+
+  # HAProxy Load Balancer
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: haproxy
+    ports:
+      - "8080:8080"    # Ethereum HTTP
+      - "8081:8081"    # Polygon HTTP
+      - "8082:8082"    # Arbitrum HTTP
+      - "8083:8083"    # BSC HTTP
+      - "8084:8084"    # Avalanche HTTP
+      - "8085:8085"    # Base HTTP
+      - "8180:8180"    # Ethereum WebSocket
+      - "8181:8181"    # Polygon WebSocket
+      - "8182:8182"    # Arbitrum WebSocket
+      - "8183:8183"    # BSC WebSocket
+      - "8184:8184"    # Avalanche WebSocket
+      - "8185:8185"    # Base WebSocket
+      - "8404:8404"    # HAProxy stats
+    volumes:
+      - ./node-configs/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - blockchain_net
+    depends_on:
+      - ethereum-node
+      - polygon-bor
+      - arbitrum-node
+      - bsc-node
+      - avalanche-node
+      - base-node
+    restart: unless-stopped
+    healthcheck:
+      test: |
+        curl -f http://localhost:8404/stats || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  blockchain_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  ethereum_data:
+    driver: local
+  polygon_heimdall_data:
+    driver: local
+  polygon_bor_data:
+    driver: local
+  arbitrum_data:
+    driver: local
+  bsc_data:
+    driver: local
+  avalanche_data:
+    driver: local
+  base_data:
+    driver: local

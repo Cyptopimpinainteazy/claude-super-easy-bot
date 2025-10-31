@@ -1,0 +1,94 @@
+chains:
+  ethereum:
+    chain_id: 1
+    gas_token: ETH
+    http_endpoints:
+      - http://haproxy:8080
+      - https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+      - https://eth-mainnet.infura.io/v3/YOUR_API_KEY
+    ws_endpoints:
+      - ws://haproxy:8180
+      - wss://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+    min_profit_threshold: 50.0
+    sync_check_interval: 30
+    health_check_timeout: 10
+    max_retries: 3
+    failover_delay: 2.0
+
+  polygon:
+    chain_id: 137
+    gas_token: MATIC
+    http_endpoints:
+      - http://haproxy:8081
+      - https://polygon-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+      - https://polygon-mainnet.infura.io/v3/YOUR_API_KEY
+    ws_endpoints:
+      - ws://haproxy:8181
+      - wss://polygon-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+    min_profit_threshold: 20.0
+    sync_check_interval: 30
+    health_check_timeout: 10
+    max_retries: 3
+    failover_delay: 2.0
+
+  arbitrum:
+    chain_id: 42161
+    gas_token: ETH
+    http_endpoints:
+      - http://haproxy:8082
+      - https://arb-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+      - https://arbitrum-mainnet.infura.io/v3/YOUR_API_KEY
+    ws_endpoints:
+      - ws://haproxy:8182
+      - wss://arb-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+    min_profit_threshold: 30.0
+    sync_check_interval: 30
+    health_check_timeout: 10
+    max_retries: 3
+    failover_delay: 2.0
+
+  bsc:
+    chain_id: 56
+    gas_token: BNB
+    http_endpoints:
+      - http://haproxy:8083
+      - https://bsc-dataseed.binance.org
+      - https://bsc-dataseed1.binance.org
+    ws_endpoints:
+      - ws://haproxy:8183
+    min_profit_threshold: 15.0
+    sync_check_interval: 30
+    health_check_timeout: 10
+    max_retries: 3
+    failover_delay: 2.0
+
+  avalanche:
+    chain_id: 43114
+    gas_token: AVAX
+    http_endpoints:
+      - http://haproxy:8084
+      - https://api.avax.network/ext/bc/C/rpc
+      - https://ava-mainnet.public.blastapi.io/ext/bc/C/rpc
+    ws_endpoints:
+      - ws://haproxy:8184
+    min_profit_threshold: 20.0
+    sync_check_interval: 30
+    health_check_timeout: 10
+    max_retries: 3
+    failover_delay: 2.0
+
+  base:
+    chain_id: 8453
+    gas_token: ETH
+    http_endpoints:
+      - http://haproxy:8085
+      - https://base.llamarpc.com
+      - https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+    ws_endpoints:
+      - ws://haproxy:8185
+      - wss://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+    min_profit_threshold: 25.0
+    sync_check_interval: 30
+    health_check_timeout: 10
+    max_retries: 3
+    failover_delay: 2.0

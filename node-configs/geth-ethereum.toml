@@ -1,0 +1,67 @@
+[Eth]
+NetworkId = 1
+SyncMode = "snap"
+NoPruning = false
+NoPrefetch = false
+LightPeers = 100
+UltraLightFraction = 75
+UltraLightOnlyAnnounce = false
+
+[Eth.Miner]
+GasPrice = 0
+Recommit = 3000000000000
+
+[Eth.TxPool]
+Locals = []
+NoLocals = false
+Journal = "transactions.rlp"
+Rejournal = 3600000000000
+PriceLimit = 1
+PriceBump = 10
+AccountSlots = 16
+GlobalSlots = 4096
+AccountQueue = 64
+GlobalQueue = 1024
+Lifetime = 10800000000000
+MaxCodeSize = 24576
+
+[Node]
+DataDir = "/root/.ethereum"
+IPCPath = "geth.ipc"
+HTTPHost = "0.0.0.0"
+HTTPPort = 8545
+HTTPVirtualHosts = ["*"]
+HTTPModules = ["eth", "net", "web3", "personal", "admin", "debug"]
+WSHost = "0.0.0.0"
+WSPort = 8546
+WSModules = ["eth", "net", "web3", "personal"]
+GraphQLVirtualHosts = ["*"]
+Listener = ":30303"
+MaxPeers = 50
+MaxPendingPeers = 0
+NAT = "any"
+
+[Node.P2P]
+MaxInboundConns = 30
+MaxOutboundConns = 10
+
+[Node.Logger]
+Format = "json"
+Level = "info"
+
+[Metrics]
+HTTP = "0.0.0.0"
+Port = 6060
+EnabledExpensiveMetrics = false
+
+[P2P]
+MaxPeers = 50
+MaxPendingPeers = 0
+NoDiscovery = false
+BootstrapNodes = [
+  "enode://d860a01f9722d78051c892f798e4aaf82007c1f5a8c81f6f311541e5aaf5d8a7a73718badb28d409c282f0d3d349ac3e2ceda633ca26375b8334b09c5476b835@18.138.108.67:30303",
+  "enode://22a8312b742f645953ebadb559f1be7260e46561a342dcf1908d7d10e22099fd4f7c0bc74176b48ff28ae6e56ee1f627f13f8ac7cb1e07349548df718d47498f@34.80.176.87:30303"
+]
+StaticNodes = []
+TrustedNodes = []
+ListenAddr = ":30303"

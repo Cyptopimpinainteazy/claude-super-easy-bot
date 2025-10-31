@@ -1,0 +1,681 @@
+"""
+ARBITRAGE BOT API SERVER
+========================
+FastAPI server to connect backend arbitrage engine with frontend dashboard
+"""
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Dict, Optional, Any
+import asyncio
+import json
+import logging
+import os
+from datetime import datetime
+from decimal import Decimal
+
+from infrastructure import NodeConfig, ChainHealth
+from arbitrage_backend import ArbitrageEngine
+
+logger = logging.getLogger(__name__)
+
+# ============================================================================
+# FASTAPI APP SETUP
+# ============================================================================
+
+app = FastAPI(
+    title="Arbitrage Nexus API",
+    description="Real-time arbitrage opportunity API",
+    version="5.0",
+)
+
+# CORS middleware for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# DATA MODELS
+# ============================================================================
+
+
+class OpportunityResponse(BaseModel):
+    id: str
+    pair: str
+    chain: str
+    buyExchange: str
+    sellExchange: str
+    buyPrice: float
+    sellPrice: float
+    spread: float
+    profit: float
+    gasEstimate: float
+    netProfit: float
+    volume24h: float
+    liquidity: float
+    confidence: float
+    risk: str
+    flashLoanAvailable: bool
+
+
+class ExecutionRequest(BaseModel):
+    opportunity_id: str
+    use_flash_loan: bool
+    slippage_tolerance: float = 0.5
+
+
+class StatsResponse(BaseModel):
+    totalPnL: float
+    todayPnL: float
+    successRate: float
+    totalTrades: int
+    averageProfit: float
+    maxDrawdown: float
+    winRate: float
+    avgExecutionTime: float
+    gasEfficiency: float
+    sharpeRatio: float
+    maxConsecutiveWins: int
+    activeCapital: float
+
+
+class ChainStatus(BaseModel):
+    name: str
+    status: str
+    trades: int
+    gas: int
+    latency: int
+
+
+class GasPriceData(BaseModel):
+    time: str
+    eth: float
+    polygon: float
+    arbitrum: float
+    bsc: float
+
+
+class NodeHealthResponse(BaseModel):
+    chain: str
+    status: str
+    is_syncing: Optional[bool]
+    block_number: Optional[int]
+    peer_count: Optional[int]
+    net_version: Optional[int]
+    last_check: Optional[str]
+    consecutive_failures: int
+
+
+class NodesHealthSummary(BaseModel):
+    timestamp: str
+    overall_status: str
+    chains: Dict[str, NodeHealthResponse]
+
+
+class ChainMetricsResponse(BaseModel):
+    chain: str
+    status: str
+    block_number: Optional[int]
+    peer_count: Optional[int]
+    syncing: Optional[bool]
+    uptime_percent: float
+    last_check_age_seconds: int
+
+
+# ============================================================================
+# GLOBAL STATE
+# ============================================================================
+
+
+class BotState:
+    """Global bot state"""
+
+    def __init__(self):
+        self.is_running = False
+        self.opportunities = []
+        self.stats = {
+            "totalPnL": 12847.63,
+            "todayPnL": 456.89,
+            "successRate": 87.3,
+            "totalTrades": 1247,
+            "averageProfit": 23.45,
+            "maxDrawdown": -156.80,
+            "winRate": 89.2,
+            "avgExecutionTime": 2.3,
+            "gasEfficiency": 92.5,
+            "sharpeRatio": 2.34,
+            "maxConsecutiveWins": 17,
+            "activeCapital": 25000.0,
+        }
+        self.connected_clients = set()
+        self.engine: Optional[ArbitrageEngine] = None
+        self.last_health_update: Optional[ChainHealth] = None
+
+
+bot_state = BotState()
+
+# ============================================================================
+# WEBSOCKET CONNECTION MANAGER
+# ============================================================================
+
+
+class ConnectionManager:
+    """Manages WebSocket connections"""
+
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        print(f"✓ Client connected. Total: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+        print(f"✗ Client disconnected. Total: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected clients"""
+        dead_connections = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                print(f"Error sending to client: {e}")
+                dead_connections.append(connection)
+
+        # Remove dead connections
+        for conn in dead_connections:
+            self.disconnect(conn)
+
+
+manager = ConnectionManager()
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
+
+
+@app.get("/")
+async def root():
+    """API health check"""
+    return {"status": "online", "version": "5.0", "bot_running": bot_state.is_running}
+
+
+@app.get("/api/opportunities", response_model=List[OpportunityResponse])
+async def get_opportunities():
+    """Get current arbitrage opportunities"""
+    return bot_state.opportunities
+
+
+@app.get("/api/stats", response_model=StatsResponse)
+async def get_stats():
+    """Get bot statistics"""
+    return bot_state.stats
+
+
+@app.post("/api/bot/start")
+async def start_bot():
+    """Start the arbitrage bot"""
+    if bot_state.is_running:
+        raise HTTPException(status_code=400, detail="Bot is already running")
+
+    bot_state.is_running = True
+
+    # Start the engine in background
+    asyncio.create_task(run_bot_engine())
+
+    return {"status": "started", "message": "Bot started successfully"}
+
+
+@app.post("/api/bot/stop")
+async def stop_bot():
+    """Stop the arbitrage bot"""
+    if not bot_state.is_running:
+        raise HTTPException(status_code=400, detail="Bot is not running")
+
+    bot_state.is_running = False
+
+    if bot_state.engine:
+        bot_state.engine.stop_scanning()
+
+    return {"status": "stopped", "message": "Bot stopped successfully"}
+
+
+@app.post("/api/execute")
+async def execute_arbitrage(request: ExecutionRequest):
+    """Execute an arbitrage opportunity"""
+
+    # Find the opportunity
+    opp = next(
+        (o for o in bot_state.opportunities if o["id"] == request.opportunity_id), None
+    )
+
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+
+    try:
+        # TODO: Implement actual execution
+        # result = await executor.execute_arbitrage(...)
+
+        # Simulated result
+        result = {
+            "success": True,
+            "profit": opp["netProfit"],
+            "gas_used": 250000,
+            "tx_hash": "0x" + "1234567890abcdef" * 4,
+        }
+
+        # Update stats
+        if result["success"]:
+            bot_state.stats["totalTrades"] += 1
+            bot_state.stats["totalPnL"] += result["profit"]
+            bot_state.stats["todayPnL"] += result["profit"]
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chains", response_model=List[ChainStatus])
+async def get_chain_status():
+    """Get status of all blockchain networks"""
+    chains = [
+        {
+            "name": "Ethereum",
+            "status": "online",
+            "trades": 420,
+            "gas": 45,
+            "latency": 12,
+        },
+        {
+            "name": "Polygon",
+            "status": "online",
+            "trades": 380,
+            "gas": 120,
+            "latency": 8,
+        },
+        {
+            "name": "Arbitrum",
+            "status": "online",
+            "trades": 290,
+            "gas": 0,
+            "latency": 10,
+        },
+        {"name": "BSC", "status": "online", "trades": 210, "gas": 3, "latency": 15},
+        {
+            "name": "Avalanche",
+            "status": "online",
+            "trades": 145,
+            "gas": 25,
+            "latency": 18,
+        },
+        {"name": "Base", "status": "online", "trades": 95, "gas": 0, "latency": 9},
+    ]
+    return chains
+
+
+@app.get("/api/gas-prices", response_model=List[GasPriceData])
+async def get_gas_prices():
+    """Get historical gas prices"""
+    # This would come from your actual monitoring
+    import time
+
+    current_time = time.strftime("%H:%M")
+
+    return [
+        {"time": current_time, "eth": 45, "polygon": 120, "arbitrum": 0.15, "bsc": 3},
+    ]
+
+
+@app.get("/api/gas-prices", response_model=List[GasPriceData])
+async def get_gas_prices():
+    """Get historical gas prices"""
+    # This would come from your actual monitoring
+    import time
+
+    current_time = time.strftime("%H:%M")
+
+    return [
+        {"time": current_time, "eth": 45, "polygon": 120, "arbitrum": 0.15, "bsc": 3},
+    ]
+
+
+# ============================================================================
+# NODE HEALTH MONITORING ENDPOINTS
+# ============================================================================
+
+
+@app.get("/api/nodes/health", response_model=NodesHealthSummary)
+async def get_nodes_health():
+    """Get health status of all monitored blockchain nodes"""
+    if not bot_state.engine or not bot_state.engine.health_monitor:
+        raise HTTPException(
+            status_code=503, detail="Health monitor not available - engine not running"
+        )
+
+    health = bot_state.engine.health_monitor.get_health_summary()
+
+    chains_data = {}
+    for chain_name, metrics in health.chains.items():
+        chains_data[chain_name] = NodeHealthResponse(
+            chain=chain_name,
+            status=metrics.status.value,
+            is_syncing=metrics.is_syncing,
+            block_number=metrics.block_number,
+            peer_count=metrics.peer_count,
+            net_version=metrics.net_version,
+            last_check=metrics.last_check.isoformat() if metrics.last_check else None,
+            consecutive_failures=metrics.consecutive_failures,
+        )
+
+    return NodesHealthSummary(
+        timestamp=health.timestamp.isoformat(),
+        overall_status=health.overall_status.value,
+        chains=chains_data,
+    )
+
+
+@app.get("/api/nodes/{chain}/metrics", response_model=ChainMetricsResponse)
+async def get_chain_metrics(
+    chain: str = Path(
+        ...,
+        description="Blockchain chain name (ethereum, polygon, arbitrum, bsc, avalanche, base)",
+    )
+):
+    """Get detailed metrics for a specific blockchain node"""
+    if not bot_state.engine or not bot_state.engine.health_monitor:
+        raise HTTPException(
+            status_code=503, detail="Health monitor not available - engine not running"
+        )
+
+    health = bot_state.engine.health_monitor.get_health_summary()
+
+    if chain not in health.chains:
+        raise HTTPException(status_code=404, detail=f"Chain {chain} not monitored")
+
+    metrics = health.chains[chain]
+
+    # Calculate uptime percent (simplified)
+    uptime = (
+        100.0
+        if metrics.consecutive_failures == 0
+        else max(0, 100 - (metrics.consecutive_failures * 10))
+    )
+
+    # Calculate time since last check
+    time_since_check = 0
+    if metrics.last_check:
+        time_since_check = int(
+            (datetime.now() - metrics.last_check.replace(tzinfo=None)).total_seconds()
+        )
+
+    return ChainMetricsResponse(
+        chain=chain,
+        status=metrics.status.value,
+        block_number=metrics.block_number,
+        peer_count=metrics.peer_count,
+        syncing=metrics.is_syncing,
+        uptime_percent=uptime,
+        last_check_age_seconds=time_since_check,
+    )
+
+
+@app.get("/api/nodes/config")
+async def get_nodes_config():
+    """Get current node configuration"""
+    if not bot_state.engine or not bot_state.engine.node_config:
+        raise HTTPException(
+            status_code=503, detail="Engine not running - no config available"
+        )
+
+    config_data = {}
+    for chain in bot_state.engine.node_config.get_all_chains():
+        chain_config = bot_state.engine.node_config.get_chain_config(chain)
+        if chain_config:
+            config_data[chain] = {
+                "chain_id": chain_config.chain_id,
+                "gas_token": chain_config.gas_token,
+                "min_profit_threshold": chain_config.min_profit_threshold,
+                "http_endpoints": [ep.url for ep in chain_config.http_endpoints],
+                "ws_endpoints": [ep.url for ep in chain_config.ws_endpoints],
+            }
+
+    return {"chains": config_data, "total_chains": len(config_data)}
+
+
+# ============================================================================
+# WEBSOCKET ENDPOINT
+# ============================================================================
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time updates"""
+    await manager.connect(websocket)
+
+    try:
+        # Send initial state
+        await websocket.send_json(
+            {
+                "type": "initial_state",
+                "data": {
+                    "is_running": bot_state.is_running,
+                    "opportunities": bot_state.opportunities,
+                    "stats": bot_state.stats,
+                },
+            }
+        )
+
+        # Keep connection alive and listen for messages
+        while True:
+            try:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+
+                # Handle different message types
+                if message.get("type") == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+            except asyncio.TimeoutError:
+                continue
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        manager.disconnect(websocket)
+
+
+# ============================================================================
+# BACKGROUND TASKS
+# ============================================================================
+
+
+async def run_bot_engine():
+    """Run the bot engine and broadcast updates"""
+
+    logger.info("🚀 Starting bot engine...")
+
+    try:
+        # Load configuration
+        config_file = os.getenv("NODE_CONFIG_FILE", "node-config.yaml")
+        if not os.path.exists(config_file):
+            logger.error(f"Config file not found: {config_file}")
+            bot_state.is_running = False
+            return
+
+        from infrastructure import NodeConfig
+
+        node_config = NodeConfig.from_yaml(config_file)
+
+        # Create and initialize engine
+        bot_state.engine = ArbitrageEngine(node_config)
+        await bot_state.engine.initialize()
+
+        # Start mempool monitoring
+        await bot_state.engine.start_mempool_monitoring(
+            ["ethereum", "polygon", "arbitrum"]
+        )
+
+        logger.info("✓ Engine initialized")
+
+        while bot_state.is_running:
+            try:
+                # TODO: Get real opportunities from engine
+                # opportunities = await bot_state.engine.arbitrage_detector.scan_all_chains()
+
+                # Simulated opportunities for now
+                opportunities = generate_mock_opportunities()
+                bot_state.opportunities = opportunities
+
+                # Broadcast opportunities update
+                await manager.broadcast(
+                    {"type": "opportunities_update", "data": opportunities}
+                )
+
+                # Broadcast stats
+                await manager.broadcast(
+                    {"type": "stats_update", "data": bot_state.stats}
+                )
+
+                # Broadcast health status if available
+                if bot_state.engine.health_monitor:
+                    health = bot_state.engine.health_monitor.get_health_summary()
+                    bot_state.last_health_update = health
+
+                    health_data = {
+                        "timestamp": health.timestamp.isoformat(),
+                        "overall_status": health.overall_status.value,
+                        "chains": {
+                            k: {
+                                "status": v.status.value,
+                                "block_number": v.block_number,
+                                "peer_count": v.peer_count,
+                                "is_syncing": v.is_syncing,
+                                "consecutive_failures": v.consecutive_failures,
+                            }
+                            for k, v in health.chains.items()
+                        },
+                    }
+
+                    await manager.broadcast(
+                        {"type": "node_health_update", "data": health_data}
+                    )
+
+                # Wait before next scan
+                await asyncio.sleep(5)
+
+            except Exception as e:
+                logger.error(f"Error in bot engine loop: {e}")
+                await asyncio.sleep(5)
+
+    except Exception as e:
+        logger.error(f"Fatal error starting engine: {e}")
+
+    finally:
+        logger.info("🛑 Bot engine stopping...")
+        if bot_state.engine:
+            await bot_state.engine.cleanup()
+        bot_state.is_running = False
+
+
+def generate_mock_opportunities() -> List[Dict]:
+    """Generate mock opportunities for testing"""
+    import random
+
+    pairs = ["ETH/USDT", "BTC/USDC", "MATIC/USDT", "AVAX/USDT", "ARB/USDC"]
+    chains = ["Ethereum", "Polygon", "Arbitrum", "BSC", "Avalanche"]
+    exchanges = ["Uniswap V3", "SushiSwap", "PancakeSwap", "QuickSwap", "Camelot"]
+
+    opportunities = []
+
+    for i in range(5):
+        pair = random.choice(pairs)
+        chain = random.choice(chains)
+        buy_ex = random.choice(exchanges)
+        sell_ex = random.choice([e for e in exchanges if e != buy_ex])
+
+        buy_price = 3250 + random.uniform(-50, 50)
+        spread = random.uniform(0.05, 0.5)
+        sell_price = buy_price * (1 + spread / 100)
+
+        gross_profit = spread * 10
+        gas_cost = random.uniform(10, 50)
+        net_profit = gross_profit - gas_cost
+
+        if net_profit > 0:
+            opportunities.append(
+                {
+                    "id": f"{chain}_{pair}_{int(datetime.now().timestamp())}_{i}",
+                    "pair": pair,
+                    "chain": chain,
+                    "buyExchange": buy_ex,
+                    "sellExchange": sell_ex,
+                    "buyPrice": round(buy_price, 4),
+                    "sellPrice": round(sell_price, 4),
+                    "spread": round(spread, 2),
+                    "profit": round(gross_profit, 2),
+                    "gasEstimate": round(gas_cost, 2),
+                    "netProfit": round(net_profit, 2),
+                    "volume24h": random.uniform(500000, 5000000),
+                    "liquidity": random.uniform(200000, 2000000),
+                    "confidence": random.uniform(75, 99),
+                    "risk": random.choice(["Low", "Medium", "High"]),
+                    "flashLoanAvailable": True,
+                }
+            )
+
+    return opportunities
+
+
+# ============================================================================
+# STARTUP/SHUTDOWN EVENTS
+# ============================================================================
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize on startup"""
+    logger.info("\n" + "=" * 60)
+    logger.info("🚀 ARBITRAGE NEXUS API SERVER (v5.0)")
+    logger.info("=" * 60)
+    logger.info(f"Server started at: {datetime.now()}")
+    logger.info("API Documentation: http://localhost:8000/docs")
+    logger.info("WebSocket: ws://localhost:8000/ws")
+    logger.info("Health Check: http://localhost:8000/api/nodes/health")
+    logger.info("=" * 60 + "\n")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    logger.info("\n🛑 Shutting down server...")
+
+    if bot_state.is_running and bot_state.engine:
+        bot_state.is_running = False
+        await bot_state.engine.cleanup()
+
+    logger.info("✓ Server shutdown complete\n")
+
+
+# ============================================================================
+# RUN SERVER
+# ============================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "api_server:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,  # Auto-reload on code changes
+        log_level="info",
+    )
