@@ -105,6 +105,9 @@ class ExtensionTester:
         # Test type checking
         results["typeChecking"] = await self._test_type_checking()
 
+        # Test documentation automation
+        results["documentation"] = await self._test_documentation()
+
         return results
 
     async def _test_copilot(self) -> Dict[str, Any]:
@@ -512,6 +515,41 @@ result = add_numbers("hello", 5)
         finally:
             if test_file.exists():
                 test_file.unlink()
+
+    async def _test_documentation(self) -> Dict[str, Any]:
+        """Test documentation automation."""
+        try:
+            # Check if sample_function.py exists and has docstrings
+            sample_file = self.workspace_root / "sample_function.py"
+            if not sample_file.exists():
+                return {
+                    "status": "warning",
+                    "message": "Sample documentation file not found"
+                }
+
+            # Read the file and check for docstrings
+            with open(sample_file, 'r') as f:
+                content = f.read()
+
+            # Check for Google-style docstrings
+            has_docstrings = '"""' in content and 'Args:' in content and 'Returns:' in content
+
+            if has_docstrings:
+                return {
+                    "status": "success",
+                    "message": "Auto-docstring generation working - Google-style docstrings detected"
+                }
+            else:
+                return {
+                    "status": "warning",
+                    "message": "Auto-docstring extension may need configuration"
+                }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Documentation test failed: {str(e)}"
+            }
 
     async def run_all_tests(self) -> Dict[str, Any]:
         """Run all extension tests."""

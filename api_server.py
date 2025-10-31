@@ -7,21 +7,20 @@ FastAPI server to connect backend arbitrage engine with frontend dashboard
 # OpenTelemetry Tracing Setup - Must be first
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.aiohttp import AioHTTPClientInstrumentor
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 from opentelemetry.instrumentation.asyncio import AsyncioInstrumentor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 # Configure tracing
 trace.set_tracer_provider(TracerProvider())
 trace.get_tracer_provider().add_span_processor(
-    BatchSpanProcessor(
-        OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
-    )
+    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces"))
 )
 
 # Instrument libraries
-AioHTTPClientInstrumentor().instrument()
+AioHttpClientInstrumentor().instrument()
 AsyncioInstrumentor().instrument()
 
 # Standard library imports
@@ -176,7 +175,7 @@ class BotState:
         self.connected_clients = set()
         self.engine: Optional[ArbitrageEngine] = None
         self.last_health_update: Optional[ChainHealth] = None
-        
+
         # Database and cache managers
         self.db_manager = get_db_manager()
         self.redis_cache = get_redis_cache()
@@ -186,7 +185,7 @@ class BotState:
         self.gas_price_repo: Optional[GasPriceRepository] = None
         self.alert_repo: Optional[AlertRepository] = None
         self.chain_metric_repo: Optional[ChainMetricRepository] = None
-        
+
         # Rate limiting state
         self.execution_rate_limit_key = "api:executions:rate_limit"
         self.max_executions_per_minute = 10
@@ -239,11 +238,7 @@ manager = ConnectionManager()
 @app.get("/")
 async def root():
     """API health check"""
-    return {
-        "status": "online",
-        "version": "5.0",
-        "bot_running": bot_state.is_running
-    }
+    return {"status": "online", "version": "5.0", "bot_running": bot_state.is_running}
 
 
 @app.get("/api/opportunities", response_model=List[OpportunityResponse])
@@ -254,42 +249,40 @@ async def get_opportunities():
         cached_opps = await bot_state.redis_cache.get("opportunities:recent")
         if cached_opps:
             return json.loads(cached_opps)
-        
+
         # If cache miss, query database
         if bot_state.opportunity_repo:
             opps = await bot_state.opportunity_repo.get_recent(limit=50)
-            
+
             # Convert to response format
             response_opps = []
             for opp in opps:
-                response_opps.append(OpportunityResponse(
-                    id=str(opp.id),
-                    pair=opp.pair,
-                    chain=opp.chain,
-                    buyExchange=opp.buy_exchange,
-                    sellExchange=opp.sell_exchange,
-                    buyPrice=float(opp.buy_price),
-                    sellPrice=float(opp.sell_price),
-                    spread=float(opp.spread),
-                    profit=float(opp.gross_profit),
-                    gasEstimate=float(opp.gross_profit - opp.net_profit),
-                    netProfit=float(opp.net_profit),
-                    volume24h=0.0,
-                    liquidity=0.0,
-                    confidence=float(opp.confidence),
-                    risk=opp.risk_level.upper(),
-                    flashLoanAvailable=opp.flash_loan_available,
-                ))
-            
+                response_opps.append(
+                    OpportunityResponse(
+                        id=str(opp.id),
+                        pair=opp.pair,
+                        chain=opp.chain,
+                        buyExchange=opp.buy_exchange,
+                        sellExchange=opp.sell_exchange,
+                        buyPrice=float(opp.buy_price),
+                        sellPrice=float(opp.sell_price),
+                        spread=float(opp.spread),
+                        profit=float(opp.gross_profit),
+                        gasEstimate=float(opp.gross_profit - opp.net_profit),
+                        netProfit=float(opp.net_profit),
+                        volume24h=0.0,
+                        liquidity=0.0,
+                        confidence=float(opp.confidence),
+                        risk=opp.risk_level.upper(),
+                        flashLoanAvailable=opp.flash_loan_available,
+                    )
+                )
+
             # Cache result for 10 seconds
-            await bot_state.redis_cache.set(
-                "opportunities:recent",
-                json.dumps([o.dict() for o in response_opps]),
-                ttl=10
-            )
-            
+            await bot_state.redis_cache.set("opportunities:recent", json.dumps([o.dict() for o in response_opps]), ttl=10)
+
             return response_opps
-        
+
         return []
     except Exception as e:
         logger.warning(f"Error fetching opportunities: {e}")
@@ -305,11 +298,11 @@ async def get_stats():
         if cached_stats:
             stats_data = json.loads(cached_stats)
             return StatsResponse(**stats_data)
-        
+
         # Query database for latest stats
         if bot_state.stats_repo:
             latest_stats = await bot_state.stats_repo.get_latest()
-            
+
             if latest_stats:
                 stats_data = {
                     "totalPnL": float(latest_stats.total_profit),
@@ -325,24 +318,42 @@ async def get_stats():
                     "maxConsecutiveWins": 0,
                     "activeCapital": float(latest_stats.active_capital) if latest_stats.active_capital else 0.0,
                 }
-                
+
                 # Cache for 5 seconds
                 await bot_state.redis_cache.set("bot:stats:current", json.dumps(stats_data), ttl=5)
-                
+
                 return StatsResponse(**stats_data)
-        
+
         # Return default stats if no data available
         return StatsResponse(
-            totalPnL=0.0, todayPnL=0.0, successRate=0.0, totalTrades=0,
-            averageProfit=0.0, maxDrawdown=0.0, winRate=0.0, avgExecutionTime=0.0,
-            gasEfficiency=0.0, sharpeRatio=0.0, maxConsecutiveWins=0, activeCapital=0.0
+            totalPnL=0.0,
+            todayPnL=0.0,
+            successRate=0.0,
+            totalTrades=0,
+            averageProfit=0.0,
+            maxDrawdown=0.0,
+            winRate=0.0,
+            avgExecutionTime=0.0,
+            gasEfficiency=0.0,
+            sharpeRatio=0.0,
+            maxConsecutiveWins=0,
+            activeCapital=0.0,
         )
     except Exception as e:
         logger.warning(f"Error fetching stats: {e}")
         return StatsResponse(
-            totalPnL=0.0, todayPnL=0.0, successRate=0.0, totalTrades=0,
-            averageProfit=0.0, maxDrawdown=0.0, winRate=0.0, avgExecutionTime=0.0,
-            gasEfficiency=0.0, sharpeRatio=0.0, maxConsecutiveWins=0, activeCapital=0.0
+            totalPnL=0.0,
+            todayPnL=0.0,
+            successRate=0.0,
+            totalTrades=0,
+            averageProfit=0.0,
+            maxDrawdown=0.0,
+            winRate=0.0,
+            avgExecutionTime=0.0,
+            gasEfficiency=0.0,
+            sharpeRatio=0.0,
+            maxConsecutiveWins=0,
+            activeCapital=0.0,
         )
 
 
@@ -377,31 +388,28 @@ async def stop_bot():
 @app.post("/api/execute")
 async def execute_arbitrage(request: ExecutionRequest):
     """Execute an arbitrage opportunity with rate limiting"""
-    
+
     # Check rate limit
     try:
         is_allowed = await bot_state.redis_cache.rate_limit(
-            bot_state.execution_rate_limit_key,
-            max_requests=bot_state.max_executions_per_minute,
-            window_seconds=60
+            bot_state.execution_rate_limit_key, max_requests=bot_state.max_executions_per_minute, window_seconds=60
         )
-        
+
         if not is_allowed:
             raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit exceeded. Max {bot_state.max_executions_per_minute} executions per minute"
+                status_code=429, detail=f"Rate limit exceeded. Max {bot_state.max_executions_per_minute} executions per minute"
             )
     except Exception as e:
         logger.warning(f"Rate limit check failed, allowing request: {e}")
-    
+
     # Find the opportunity in database
     try:
         if bot_state.opportunity_repo:
             opp = await bot_state.opportunity_repo.get_by_id(int(request.opportunity_id))
-            
+
             if not opp:
                 raise HTTPException(status_code=404, detail="Opportunity not found")
-            
+
             # Create execution record
             execution = await bot_state.execution_repo.create(
                 opportunity_id=request.opportunity_id,
@@ -416,7 +424,7 @@ async def execute_arbitrage(request: ExecutionRequest):
                 error_message=None,
                 executed_at=datetime.utcnow(),
             )
-            
+
             # Simulated result
             result = {
                 "success": True,
@@ -425,23 +433,17 @@ async def execute_arbitrage(request: ExecutionRequest):
                 "tx_hash": "0x" + "1234567890abcdef" * 4,
                 "execution_id": execution.id,
             }
-            
+
             # Update execution status
             await bot_state.execution_repo.update_status(
-                execution.id,
-                "success",
-                tx_hash=result["tx_hash"],
-                actual_profit=float(opp.net_profit)
+                execution.id, "success", tx_hash=result["tx_hash"], actual_profit=float(opp.net_profit)
             )
-            
+
             # Publish execution event to Redis pub/sub for WebSocket broadcast
-            await bot_state.redis_cache.publish(
-                "arbitrage:executions",
-                json.dumps(result)
-            )
-            
+            await bot_state.redis_cache.publish("arbitrage:executions", json.dumps(result))
+
             return result
-        
+
         raise HTTPException(status_code=500, detail="Database not available")
     except HTTPException:
         raise
@@ -494,23 +496,25 @@ async def get_executions(limit: int = 50, offset: int = 0):
     try:
         if bot_state.execution_repo:
             executions = await bot_state.execution_repo.get_recent(limit=limit)
-            
+
             result = []
             for exec_record in executions:
-                result.append({
-                    "id": exec_record.id,
-                    "opportunityId": exec_record.opportunity_id,
-                    "chain": exec_record.chain,
-                    "status": exec_record.status,
-                    "txHash": exec_record.tx_hash,
-                    "profit": float(exec_record.actual_profit) if exec_record.actual_profit else 0.0,
-                    "gasUsed": exec_record.gas_used,
-                    "slippage": exec_record.slippage,
-                    "executedAt": exec_record.executed_at.isoformat() if exec_record.executed_at else None,
-                })
-            
+                result.append(
+                    {
+                        "id": exec_record.id,
+                        "opportunityId": exec_record.opportunity_id,
+                        "chain": exec_record.chain,
+                        "status": exec_record.status,
+                        "txHash": exec_record.tx_hash,
+                        "profit": float(exec_record.actual_profit) if exec_record.actual_profit else 0.0,
+                        "gasUsed": exec_record.gas_used,
+                        "slippage": exec_record.slippage,
+                        "executedAt": exec_record.executed_at.isoformat() if exec_record.executed_at else None,
+                    }
+                )
+
             return {"total": len(result), "executions": result}
-        
+
         return {"total": 0, "executions": []}
     except Exception as e:
         logger.warning(f"Error fetching executions: {e}")
@@ -526,22 +530,24 @@ async def get_alerts(limit: int = 50, acknowledged: Optional[bool] = False):
                 alerts = await bot_state.alert_repo.get_recent(limit=limit)
             else:
                 alerts = await bot_state.alert_repo.get_unacknowledged(limit=limit)
-            
+
             result = []
             for alert in alerts:
-                result.append({
-                    "id": alert.id,
-                    "severity": alert.severity,
-                    "category": alert.category,
-                    "chain": alert.chain,
-                    "message": alert.message,
-                    "details": alert.details,
-                    "createdAt": alert.created_at.isoformat() if alert.created_at else None,
-                    "acknowledged": alert.acknowledged,
-                })
-            
+                result.append(
+                    {
+                        "id": alert.id,
+                        "severity": alert.severity,
+                        "category": alert.category,
+                        "chain": alert.chain,
+                        "message": alert.message,
+                        "details": alert.details,
+                        "createdAt": alert.created_at.isoformat() if alert.created_at else None,
+                        "acknowledged": alert.acknowledged,
+                    }
+                )
+
             return {"total": len(result), "alerts": result}
-        
+
         return {"total": 0, "alerts": []}
     except Exception as e:
         logger.warning(f"Error fetching alerts: {e}")
@@ -583,9 +589,7 @@ async def get_gas_prices():
 async def get_nodes_health():
     """Get health status of all monitored blockchain nodes"""
     if not bot_state.engine or not bot_state.engine.health_monitor:
-        raise HTTPException(
-            status_code=503, detail="Health monitor not available - engine not running"
-        )
+        raise HTTPException(status_code=503, detail="Health monitor not available - engine not running")
 
     health = bot_state.engine.health_monitor.get_health_summary()
 
@@ -618,9 +622,7 @@ async def get_chain_metrics(
 ):
     """Get detailed metrics for a specific blockchain node"""
     if not bot_state.engine or not bot_state.engine.health_monitor:
-        raise HTTPException(
-            status_code=503, detail="Health monitor not available - engine not running"
-        )
+        raise HTTPException(status_code=503, detail="Health monitor not available - engine not running")
 
     health = bot_state.engine.health_monitor.get_health_summary()
 
@@ -630,18 +632,12 @@ async def get_chain_metrics(
     metrics = health.chains[chain]
 
     # Calculate uptime percent (simplified)
-    uptime = (
-        100.0
-        if metrics.consecutive_failures == 0
-        else max(0, 100 - (metrics.consecutive_failures * 10))
-    )
+    uptime = 100.0 if metrics.consecutive_failures == 0 else max(0, 100 - (metrics.consecutive_failures * 10))
 
     # Calculate time since last check
     time_since_check = 0
     if metrics.last_check:
-        time_since_check = int(
-            (datetime.now() - metrics.last_check.replace(tzinfo=None)).total_seconds()
-        )
+        time_since_check = int((datetime.now() - metrics.last_check.replace(tzinfo=None)).total_seconds())
 
     return ChainMetricsResponse(
         chain=chain,
@@ -658,9 +654,7 @@ async def get_chain_metrics(
 async def get_nodes_config():
     """Get current node configuration"""
     if not bot_state.engine or not bot_state.engine.node_config:
-        raise HTTPException(
-            status_code=503, detail="Engine not running - no config available"
-        )
+        raise HTTPException(status_code=503, detail="Engine not running - no config available")
 
     config_data = {}
     for chain in bot_state.engine.node_config.get_all_chains():
@@ -747,9 +741,7 @@ async def run_bot_engine():
         await bot_state.engine.initialize()
 
         # Start mempool monitoring
-        await bot_state.engine.start_mempool_monitoring(
-            ["ethereum", "polygon", "arbitrum"]
-        )
+        await bot_state.engine.start_mempool_monitoring(["ethereum", "polygon", "arbitrum"])
 
         logger.info("✓ Engine initialized")
 
@@ -763,14 +755,10 @@ async def run_bot_engine():
                 bot_state.opportunities = opportunities
 
                 # Broadcast opportunities update
-                await manager.broadcast(
-                    {"type": "opportunities_update", "data": opportunities}
-                )
+                await manager.broadcast({"type": "opportunities_update", "data": opportunities})
 
                 # Broadcast stats
-                await manager.broadcast(
-                    {"type": "stats_update", "data": bot_state.stats}
-                )
+                await manager.broadcast({"type": "stats_update", "data": bot_state.stats})
 
                 # Broadcast health status if available
                 if bot_state.engine.health_monitor:
@@ -792,9 +780,7 @@ async def run_bot_engine():
                         },
                     }
 
-                    await manager.broadcast(
-                        {"type": "node_health_update", "data": health_data}
-                    )
+                    await manager.broadcast({"type": "node_health_update", "data": health_data})
 
                 # Wait before next scan
                 await asyncio.sleep(5)

@@ -8,33 +8,28 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Callable, Any
-from dataclasses import dataclass, asdict
-from decimal import Decimal
-from web3 import Web3
-import aiohttp
-from collections import defaultdict
 import time
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from infrastructure import (
-    NodeConfig,
-    EnhancedBlockchainManager,
-    NodeHealthMonitor,
-    NoHealthyEndpointsError,
-)
+import aiohttp
+from web3 import Web3
 
-from database.connection import get_db_manager
 from database.cache import get_redis_cache
+from database.connection import get_db_manager
+from database.models import RiskLevel
 from database.repository import (
-    OpportunityRepository,
-    ExecutionRepository,
-    StatsRepository,
-    GasPriceRepository,
     AlertRepository,
     ChainMetricRepository,
+    ExecutionRepository,
+    GasPriceRepository,
+    OpportunityRepository,
+    StatsRepository,
 )
-from database.models import RiskLevel
+from infrastructure import EnhancedBlockchainManager, NodeConfig, NodeHealthMonitor, NoHealthyEndpointsError
 
 logger = logging.getLogger(__name__)
 
@@ -246,9 +241,7 @@ class PriceFetcher:
             logger.error(f"Error fetching price from {dex} on {chain}: {e}")
             return None
 
-    async def fetch_all_prices(
-        self, chain: str, pair: Tuple[str, str]
-    ) -> List[PriceQuote]:
+    async def fetch_all_prices(self, chain: str, pair: Tuple[str, str]) -> List[PriceQuote]:
         """Fetch prices for a pair from all DEXs on a chain"""
         token_in, token_out = pair
         amount_in = Decimal("1")  # 1 token
@@ -278,16 +271,12 @@ class PriceFetcher:
 class ArbitrageDetector:
     """Detects arbitrage opportunities across DEXs"""
 
-    def __init__(
-        self, blockchain_manager: EnhancedBlockchainManager, price_fetcher: PriceFetcher
-    ):
+    def __init__(self, blockchain_manager: EnhancedBlockchainManager, price_fetcher: PriceFetcher):
         self.blockchain_manager = blockchain_manager
         self.price_fetcher = price_fetcher
         self.opportunities = []
 
-    def calculate_confidence(
-        self, spread: Decimal, liquidity: Decimal, volatility: Decimal
-    ) -> float:
+    def calculate_confidence(self, spread: Decimal, liquidity: Decimal, volatility: Decimal) -> float:
         """Calculate confidence score for an opportunity"""
         confidence = 50.0
 
@@ -311,13 +300,9 @@ class ArbitrageDetector:
 
         return min(99.0, confidence)
 
-    def assess_risk(
-        self, spread: Decimal, gas_cost: Decimal, net_profit: Decimal
-    ) -> str:
+    def assess_risk(self, spread: Decimal, gas_cost: Decimal, net_profit: Decimal) -> str:
         """Assess risk level of an opportunity"""
-        profit_margin = (
-            net_profit / (net_profit + gas_cost) if net_profit > 0 else Decimal("0")
-        )
+        profit_margin = net_profit / (net_profit + gas_cost) if net_profit > 0 else Decimal("0")
 
         if profit_margin > Decimal("0.5") and spread > Decimal("0.3"):
             return "Low"
@@ -326,9 +311,7 @@ class ArbitrageDetector:
         else:
             return "High"
 
-    async def detect_opportunities(
-        self, chain: str, pair: Tuple[str, str]
-    ) -> List[ArbitrageOpportunity]:
+    async def detect_opportunities(self, chain: str, pair: Tuple[str, str]) -> List[ArbitrageOpportunity]:
         """Detect arbitrage opportunities for a pair on a chain"""
         # Get min_profit_threshold from node config
         chain_config = self.blockchain_manager.node_config.get_chain_config(chain)
@@ -345,9 +328,7 @@ class ArbitrageDetector:
         for i, buy_quote in enumerate(quotes):
             for sell_quote in quotes[i + 1 :]:
                 # Check if profitable to buy from first and sell to second
-                spread = (
-                    (sell_quote.price - buy_quote.price) / buy_quote.price
-                ) * Decimal("100")
+                spread = ((sell_quote.price - buy_quote.price) / buy_quote.price) * Decimal("100")
 
                 if spread > Decimal("0.05"):  # Minimum 0.05% spread
                     gross_profit = sell_quote.amount_out - buy_quote.amount_in
@@ -426,9 +407,7 @@ class ArbitrageEngine:
         self.blockchain_manager = EnhancedBlockchainManager(node_config)
         self.health_monitor = NodeHealthMonitor(self.blockchain_manager)
         self.price_fetcher = PriceFetcher(self.blockchain_manager)
-        self.arbitrage_detector = ArbitrageDetector(
-            self.blockchain_manager, self.price_fetcher
-        )
+        self.arbitrage_detector = ArbitrageDetector(self.blockchain_manager, self.price_fetcher)
         self.is_running = False
         self.mempool_subs: Dict[str, str] = {}  # chain -> subscription_id
         self.stats = {
@@ -437,7 +416,7 @@ class ArbitrageEngine:
             "trades_executed": 0,
             "total_profit": Decimal("0"),
         }
-        
+
         # Database and cache managers
         self.db_manager = get_db_manager()
         self.redis_cache = get_redis_cache()
@@ -447,7 +426,7 @@ class ArbitrageEngine:
         self.gas_price_repo = GasPriceRepository(self.db_manager)
         self.alert_repo = AlertRepository(self.db_manager)
         self.chain_metric_repo = ChainMetricRepository(self.db_manager)
-        
+
         # Tracking for stats snapshot timing
         self.last_stats_snapshot = time.time()
         self.stats_snapshot_interval = 60  # Update stats every 60 seconds
@@ -456,7 +435,7 @@ class ArbitrageEngine:
         """Initialize connections and monitoring."""
         logger.info("Initializing arbitrage engine...")
         await self.blockchain_manager.initialize()
-        
+
         # Initialize database
         try:
             await self.db_manager.initialize()
@@ -479,7 +458,7 @@ class ArbitrageEngine:
         """Persist opportunities to database and cache"""
         if not opportunities:
             return
-        
+
         try:
             # Persist to database
             for opp in opportunities:
@@ -499,10 +478,10 @@ class ArbitrageEngine:
                     flash_loan_available=getattr(opp, "flash_loan_available", False),
                     detected_at=datetime.utcnow(),
                 )
-            
+
             # Cache top opportunities for quick API access
             await self.redis_cache.cache_opportunities(opportunities)
-            
+
             logger.debug(f"✓ Persisted {len(opportunities)} opportunities to database and cache")
         except Exception as e:
             logger.warning(f"Failed to persist opportunities: {e}")
@@ -512,7 +491,7 @@ class ArbitrageEngine:
         try:
             if time.time() - self.last_stats_snapshot < self.stats_snapshot_interval:
                 return
-            
+
             # Create stats snapshot
             await self.stats_repo.create_snapshot(
                 total_scans=self.stats["total_scans"],
@@ -529,7 +508,7 @@ class ArbitrageEngine:
                 sharpe_ratio=float(self.stats.get("sharpe_ratio", 0)),
                 active_capital=float(self.stats.get("active_capital", 0)),
             )
-            
+
             self.last_stats_snapshot = time.time()
             logger.debug("✓ Stats snapshot saved to database")
         except Exception as e:
@@ -543,10 +522,10 @@ class ArbitrageEngine:
                     w3 = await self.blockchain_manager.get_http_web3(chain)
                     if not w3:
                         continue
-                    
+
                     block = w3.eth.block_number
-                    peer_count = len(w3.net.peer_count) if hasattr(w3.net, 'peer_count') else 0
-                    
+                    peer_count = len(w3.net.peer_count) if hasattr(w3.net, "peer_count") else 0
+
                     await self.chain_metric_repo.record(
                         chain=chain,
                         block_number=block,
@@ -558,6 +537,8 @@ class ArbitrageEngine:
                     )
                 except Exception as e:
                     logger.debug(f"Could not record metrics for {chain}: {e}")
+        except Exception as e:
+            logger.debug(f"Error recording chain metrics: {e}")
 
     async def start_mempool_monitoring(self, chains: Optional[List[str]] = None):
         """
@@ -573,9 +554,7 @@ class ArbitrageEngine:
 
         for chain in chains:
             try:
-                sub_id = await self.blockchain_manager.subscribe_pending_transactions(
-                    chain, self._handle_pending_tx
-                )
+                sub_id = await self.blockchain_manager.subscribe_pending_transactions(chain, self._handle_pending_tx)
                 self.mempool_subs[chain] = sub_id
                 logger.info(f"✓ Mempool monitoring started for {chain}")
             except Exception as e:
@@ -611,35 +590,25 @@ class ArbitrageEngine:
 
                 # Persist opportunities to database and cache
                 await self._persist_opportunities(opportunities)
-                
+
                 # Update stats snapshot periodically
                 await self._update_stats_snapshot()
-                
+
                 # Record chain metrics
                 await self._record_chain_metrics()
 
                 # Display results
-                logger.info(
-                    f"\n⚡ Scan #{self.stats['total_scans']} - Found {len(opportunities)} opportunities"
-                )
+                logger.info(f"\n⚡ Scan #{self.stats['total_scans']} - Found {len(opportunities)} opportunities")
                 logger.info(f"⏱️  Scan time: {time.time() - start_time:.2f}s")
 
                 if opportunities:
                     logger.info("\n🎯 Top Opportunities:")
                     for i, opp in enumerate(opportunities[:5], 1):
                         logger.info(f"  {i}. {opp.pair} on {opp.chain.upper()}")
-                        logger.info(
-                            f"     Buy: {opp.buy_exchange} @ ${opp.buy_price:.4f}"
-                        )
-                        logger.info(
-                            f"     Sell: {opp.sell_exchange} @ ${opp.sell_price:.4f}"
-                        )
-                        logger.info(
-                            f"     Spread: {opp.spread_percent:.2f}% | Net: ${opp.net_profit:.2f}"
-                        )
-                        logger.info(
-                            f"     Confidence: {opp.confidence:.0f}% | Risk: {opp.risk_level}"
-                        )
+                        logger.info(f"     Buy: {opp.buy_exchange} @ ${opp.buy_price:.4f}")
+                        logger.info(f"     Sell: {opp.sell_exchange} @ ${opp.sell_price:.4f}")
+                        logger.info(f"     Spread: {opp.spread_percent:.2f}% | Net: ${opp.net_profit:.2f}")
+                        logger.info(f"     Confidence: {opp.confidence:.0f}% | Risk: {opp.risk_level}")
 
                 # Wait for next scan
                 await asyncio.sleep(interval)
