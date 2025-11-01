@@ -12,7 +12,7 @@ eth-keys==0.4.0
 
 # HTTP Clients
 aiohttp==3.9.1
-requests==2.31.0
+requests==2.32.5
 
 # Configuration
 pyyaml==6.0.1
