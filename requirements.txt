@@ -22,7 +22,7 @@ pydantic==2.5.2
 # Data Processing
 pandas==2.1.3
 numpy==1.26.2
-python-dateutil==2.8.2
+python-dateutil==2.9.0.post0
 
 # Async Support
 asyncio-contextmanager==1.0.0
